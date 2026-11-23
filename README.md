@@ -20,7 +20,7 @@ The installer downloads this repository, installs its build dependencies, compil
 Run the following from a Debian or Ubuntu server as root:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/overhang1275/next-conmutador-logs/main/install.sh)" -- https://github.com/overhang1275/next-conmutador-logs.git
+curl -fsSL https://raw.githubusercontent.com/overhang1275/next-conmutador-logs/main/install.sh | bash -s -- https://github.com/overhang1275/next-conmutador-logs.git
 ```
 
 The installer asks for the PBX IPv4 address, SMDR TCP port, and dashboard password. After installation, enter the SMDR password in **PBX settings**. The dashboard listens on TCP port `3001`; allow access only from a trusted network. Do not expose it directly to the public internet.
