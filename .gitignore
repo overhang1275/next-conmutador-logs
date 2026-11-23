@@ -21,4 +21,4 @@ web/AGENTS.md
 *.log
 .DS_Store
 Thumbs.db
-docs/*
+docs/superpowers/
