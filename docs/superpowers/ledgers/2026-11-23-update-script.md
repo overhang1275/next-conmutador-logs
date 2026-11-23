@@ -13,3 +13,7 @@ Ruling: Reject symlinked installation, state, and secrets roots/config files —
 Ruling: Require exact HTTP 200 responses and disable curl's user config for health checks — redirects or a local `.curlrc` must not count as a healthy deployment or expose request headers — cost if wrong: a customized login route that intentionally redirects needs its health check adjusted.
 
 Implementation record: candidate release is built and checked as service user before downtime; rollback restarts services only after the previous app directory is restored. No server update was run. No build or tests were run; completion is based on static review.
+
+Ruling: Start Next.js through Node's installed entry point instead of `pnpm exec` at service runtime — the server journal showed pnpm 11 attempting a temporary write in the read-only `/opt/linea-clara/web`, causing `EROFS` and automatic rollback — cost if wrong: the Next.js package entry path must remain available at `web/node_modules/next/dist/bin/next` in the production install.
+
+Ruling: For existing installations, add a managed systemd drop-in only when the effective unit still invokes `pnpm exec`; back up the effective unit and remove only a drop-in created during this update on rollback — this fixes legacy units while keeping app files read-only — cost if wrong: the service unit gains one small override file that remains after a successful update.

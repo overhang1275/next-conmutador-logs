@@ -84,6 +84,8 @@ if ! command -v cargo >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 fi
 command -v cargo >/dev/null 2>&1 || die "No quedó disponible Cargo."
+NODE_BIN="$(command -v node)"
+[[ -x "$NODE_BIN" ]] || die "No encontré el ejecutable de Node.js."
 
 info "Descargando el proyecto desde GitHub"
 git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$APP_ROOT"
@@ -168,7 +170,7 @@ WorkingDirectory=$APP_ROOT/web
 EnvironmentFile=$SECRETS_DIR/web.env
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
-ExecStart=$PNPM_BIN exec next start --hostname 0.0.0.0 --port 3001
+ExecStart=$NODE_BIN $APP_ROOT/web/node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3001
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

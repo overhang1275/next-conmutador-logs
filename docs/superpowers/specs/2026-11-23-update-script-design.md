@@ -16,7 +16,7 @@ Actualizar una instalación existente de Línea Clara en Debian o Ubuntu sin vol
 
 ## Fuera de alcance
 
-No instalar paquetes del sistema, cambiar servicios o firewall, modificar el Panasonic, editar contraseñas, migrar o limpiar registros, ni publicar el script en GitHub desde esta sesión.
+No instalar paquetes del sistema, modificar firewall, cambiar el Panasonic, editar contraseñas, migrar o limpiar registros, ni publicar el script en GitHub desde esta sesión. Para instalaciones antiguas, se permite un drop-in temporal y reversible de systemd que arranca Next.js directamente con Node; pnpm 11 intenta escribir temporales en el directorio de la aplicación, que systemd mantiene de solo lectura.
 
 ## Enfoques considerados
 

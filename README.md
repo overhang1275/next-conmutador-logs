@@ -38,6 +38,8 @@ journalctl -u linea-clara-smdr -u linea-clara-web -f
 
 After pushing the new version to GitHub, run this on the server as root. The updater builds a separate release first, then briefly stops the services while it backs up state and activates the new version. If its health checks fail, it restores the previous release. It does not change the PBX configuration, SQLite records, or dashboard credentials.
 
+The web service starts Next.js directly through Node so pnpm does not need to write temporary files inside the read-only application directory. On an older installation, the updater adds a managed systemd drop-in for this command and removes it automatically if the update rolls back. A copy of the effective prior web service definition is saved under the printed backup directory.
+
 ```bash
 set -e
 tmp="$(mktemp)"

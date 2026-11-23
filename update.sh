@@ -8,6 +8,8 @@ BACKUP_ROOT="/var/backups/linea-clara"
 SERVICE_USER="lineaclara"
 SMDR_SERVICE="linea-clara-smdr.service"
 WEB_SERVICE="linea-clara-web.service"
+WEB_NODE_OVERRIDE_DIR="/etc/systemd/system/linea-clara-web.service.d"
+WEB_NODE_OVERRIDE="$WEB_NODE_OVERRIDE_DIR/linea-clara-direct-node.conf"
 UPDATE_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 export PATH="/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 STAGING_DIR=""
@@ -18,6 +20,8 @@ PREVIOUS_MOVED=0
 NEW_RELEASE_ACTIVE=0
 SERVICES_STOPPED=0
 OLD_RELEASE_READY=1
+WEB_NODE_OVERRIDE_ADDED=0
+CANDIDATE_SERVICES_STOPPED=0
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 info() { printf '\n==> %s\n' "$*"; }
@@ -34,6 +38,7 @@ on_exit() {
       info "Deteniendo la versión nueva para restaurar la anterior"
       if systemctl stop "$WEB_SERVICE" >/dev/null 2>&1 \
         && systemctl stop "$SMDR_SERVICE" >/dev/null 2>&1; then
+        CANDIDATE_SERVICES_STOPPED=1
         if [[ -d "$APP_ROOT" ]]; then
           if mv -- "$APP_ROOT" "$FAILED_RELEASE"; then
             printf 'Versión fallida conservada en: %s\n' "$FAILED_RELEASE" >&2
@@ -48,6 +53,18 @@ on_exit() {
         OLD_RELEASE_READY=0
         printf 'No pude detener ambos servicios; dejé los archivos de la versión activa intactos. Los servicios quedan detenidos para evitar arrancar una versión no verificada.\n' >&2
       fi
+    fi
+
+    if (( WEB_NODE_OVERRIDE_ADDED )) && { (( ! NEW_RELEASE_ACTIVE )) || (( CANDIDATE_SERVICES_STOPPED )); }; then
+      if rm -f -- "$WEB_NODE_OVERRIDE"; then
+        systemctl daemon-reload || printf 'No pude recargar systemd después de quitar el ajuste temporal del servicio web.\n' >&2
+        WEB_NODE_OVERRIDE_ADDED=0
+      else
+        printf 'No pude quitar el ajuste temporal %s durante el rollback.\n' "$WEB_NODE_OVERRIDE" >&2
+        OLD_RELEASE_READY=0
+      fi
+    elif (( WEB_NODE_OVERRIDE_ADDED )); then
+      printf 'Conservé %s porque no pude confirmar que los servicios candidatos se detuvieran.\n' "$WEB_NODE_OVERRIDE" >&2
     fi
 
     if (( PREVIOUS_MOVED )) && [[ -d "$PREVIOUS_RELEASE" && ! -e "$APP_ROOT" ]]; then
@@ -99,7 +116,7 @@ trap on_exit EXIT
 [[ ! -L "$SECRETS_DIR" && ! -L "$SECRETS_DIR/web.env" ]] || die "El directorio de secretos o web.env es un enlace simbólico; no puedo garantizar un respaldo autónomo."
 id "$SERVICE_USER" >/dev/null 2>&1 || die "No existe la cuenta de servicio $SERVICE_USER."
 
-for command_name in git cargo pnpm curl systemctl mktemp install cp mv chown chmod sed date seq rm id realpath flock runuser sleep; do
+for command_name in git cargo pnpm node curl systemctl mktemp install cp mv chown chmod sed grep date seq rm id realpath flock runuser sleep; do
   command -v "$command_name" >/dev/null 2>&1 || die "Falta el comando requerido: $command_name."
 done
 exec 9>/run/lock/linea-clara-update.lock
@@ -117,6 +134,15 @@ CURRENT_BRANCH="$(git -C "$APP_ROOT" branch --show-current 2>/dev/null)"
 BRANCH="${1:-$CURRENT_BRANCH}"
 [[ -n "$BRANCH" ]] || die "La instalación no tiene una rama activa; indica una rama como argumento."
 git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "La rama indicada no es válida: $BRANCH."
+NODE_BIN="$(command -v node)"
+[[ -x "$NODE_BIN" ]] || die "No encontré el ejecutable de Node.js."
+NODE_EXEC_START="ExecStart=$NODE_BIN $APP_ROOT/web/node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3001"
+if [[ -e "$WEB_NODE_OVERRIDE" ]]; then
+  grep -Fqx '# Managed by Línea Clara update.sh' "$WEB_NODE_OVERRIDE" \
+    && grep -Fqx 'ExecStart=' "$WEB_NODE_OVERRIDE" \
+    && grep -Fqx "$NODE_EXEC_START" "$WEB_NODE_OVERRIDE" \
+    || die "Ya existe un ajuste de systemd no compatible en $WEB_NODE_OVERRIDE. No lo modifiqué."
+fi
 
 STATE_ROOT="$(realpath -e -- "$STATE_DIR")"
 
@@ -172,6 +198,8 @@ systemctl stop "$SMDR_SERVICE"
 read_runtime_config
 cp -a -- "$STATE_DIR" "$BACKUP_DIR/state"
 cp -a -- "$SECRETS_DIR" "$BACKUP_DIR/secrets"
+install -d -o root -g root -m 0700 "$BACKUP_DIR/systemd"
+systemctl cat "$WEB_SERVICE" >"$BACKUP_DIR/systemd/linea-clara-web.service.txt"
 case "$DATABASE_PATH" in
   "$STATE_ROOT"/*) ;;
   *)
@@ -187,6 +215,21 @@ case "$DATABASE_PATH" in
 esac
 OLD_COMMIT="$(git -C "$APP_ROOT" rev-parse --short HEAD 2>/dev/null || printf 'desconocido')"
 printf 'Anterior: %s\nNueva: %s\nRama: %s\n' "$OLD_COMMIT" "$NEW_COMMIT" "$BRANCH" >"$BACKUP_DIR/releases.txt"
+
+if ! systemctl cat "$WEB_SERVICE" | grep -Fqx "$NODE_EXEC_START"; then
+  info "Configurando Next.js para arrancar directamente con Node.js"
+  install -d -o root -g root -m 0755 "$WEB_NODE_OVERRIDE_DIR"
+  WEB_NODE_OVERRIDE_ADDED=1
+  cat >"$WEB_NODE_OVERRIDE" <<EOF
+# Managed by Línea Clara update.sh
+[Service]
+ExecStart=
+$NODE_EXEC_START
+EOF
+  chown root:root "$WEB_NODE_OVERRIDE"
+  chmod 0644 "$WEB_NODE_OVERRIDE"
+  systemctl daemon-reload
+fi
 
 info "Activando la versión compilada"
 mv -- "$APP_ROOT" "$PREVIOUS_RELEASE"
@@ -236,4 +279,5 @@ info "Actualización terminada"
 printf 'Versión activa: %s\n' "$NEW_COMMIT"
 printf 'Versión anterior conservada en: %s\n' "$PREVIOUS_RELEASE"
 printf 'Respaldo de estado y secretos: %s\n' "$BACKUP_DIR"
+printf 'Definición efectiva anterior del servicio web: %s\n' "$BACKUP_DIR/systemd/linea-clara-web.service.txt"
 printf 'Servicios: systemctl status %s %s\n' "$SMDR_SERVICE" "$WEB_SERVICE"
