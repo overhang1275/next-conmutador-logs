@@ -18,6 +18,11 @@ export type PublicSettings = {
   password_configured: boolean;
 };
 
+export type MenuConfig = {
+  menu_did: string;
+  menu_areas: { key: number; area: string; extension: string }[];
+};
+
 function rustConfig() {
   const url = process.env.RUST_API_URL;
   const token = process.env.RUST_API_TOKEN;
@@ -44,6 +49,33 @@ export async function getRustSettings(): Promise<PublicSettings> {
   const response = await fetch(`${url}/api/v1/settings`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
   if (!response.ok) throw new Error(`No se pudo leer la configuración del servicio Rust (${response.status}).`);
   return response.json() as Promise<PublicSettings>;
+}
+
+export async function getMenuConfig(): Promise<MenuConfig> {
+  const { url, token } = rustConfig();
+  const response = await fetch(`${url}/api/v1/menu-config`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  if (!response.ok) throw new Error(`No se pudo leer la configuración de áreas del menú (${response.status}).`);
+  return response.json() as Promise<MenuConfig>;
+}
+
+export async function saveMenuConfig(config: MenuConfig): Promise<MenuConfig> {
+  const { url, token } = rustConfig();
+  const response = await fetch(`${url}/api/v1/menu-config`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    let message = body || `No se pudo guardar la configuración de áreas (${response.status}).`;
+    try {
+      const parsed = JSON.parse(body) as { error?: string };
+      if (parsed.error) message = parsed.error;
+    } catch {}
+    throw new Error(message);
+  }
+  return response.json() as Promise<MenuConfig>;
 }
 
 export async function saveRustSettings(settings: PublicSettings & { smdr_password?: string }): Promise<{ settings: PublicSettings; reconnecting: boolean; database_copied: boolean }> {

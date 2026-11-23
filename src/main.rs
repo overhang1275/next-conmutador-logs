@@ -9,8 +9,9 @@ use chrono::{Local, NaiveDate};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
-    fs, io,
+    collections::{BTreeMap, HashMap, HashSet},
+    fs,
+    io::{self, Write},
     net::IpAddr,
     path::Path,
     sync::{
@@ -49,9 +50,16 @@ struct MenuAreaConfig {
     extension: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct MenuConfig {
+    menu_did: String,
+    menu_areas: Vec<MenuAreaConfig>,
+}
+
 #[derive(Clone)]
 struct AppState {
     settings: Arc<Mutex<Settings>>,
+    settings_write: Arc<Mutex<()>>,
     db: Arc<Mutex<Connection>>,
     status: Arc<Mutex<String>>,
     connected: Arc<AtomicBool>,
@@ -190,6 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (settings_changed, _) = watch::channel(0_u64);
     let state = AppState {
         settings: Arc::new(Mutex::new(settings)),
+        settings_write: Arc::new(Mutex::new(())),
         db: Arc::new(Mutex::new(db)),
         status: Arc::new(Mutex::new("Iniciando conexión al conmutador…".into())),
         connected: Arc::new(AtomicBool::new(false)),
@@ -201,6 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/dashboard", get(dashboard))
         .route("/api/v1/export.csv", get(export_csv))
         .route("/api/v1/settings", get(get_settings).put(update_settings))
+        .route("/api/v1/menu-config", get(get_menu_config).put(update_menu_config))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(API_ADDRESS).await?;
     println!("Recolector SMDR API disponible en http://{API_ADDRESS}");
@@ -347,6 +357,81 @@ async fn get_settings(State(state): State<AppState>, headers: HeaderMap) -> impl
     Json(public_settings(&state.settings.lock().unwrap())).into_response()
 }
 
+async fn get_menu_config(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    if !authorized(&headers, &state) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let settings = state.settings.lock().unwrap();
+    Json(MenuConfig {
+        menu_did: settings.menu_did.clone(),
+        menu_areas: settings.menu_areas.clone(),
+    })
+    .into_response()
+}
+
+async fn update_menu_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(update): Json<MenuConfig>,
+) -> impl IntoResponse {
+    if !authorized(&headers, &state) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+
+    let menu_config = match validate_menu_config(update) {
+        Ok(config) => config,
+        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
+    };
+
+    let _settings_write = state.settings_write.lock().unwrap();
+    let mut settings = state.settings.lock().unwrap();
+    let mut candidate = (*settings).clone();
+    candidate.menu_did = menu_config.menu_did.clone();
+    candidate.menu_areas = menu_config.menu_areas.clone();
+    if let Err(error) = persist_settings(&candidate) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, error).into_response();
+    }
+    *settings = candidate;
+
+    Json(menu_config).into_response()
+}
+
+fn validate_menu_config(mut config: MenuConfig) -> Result<MenuConfig, String> {
+    config.menu_did = config.menu_did.trim().to_string();
+    if config.menu_did.len() > 32 || !config.menu_did.bytes().all(|digit| digit.is_ascii_digit()) {
+        return Err("El DDI principal debe contener solo dígitos y no exceder 32 caracteres.".into());
+    }
+    if config.menu_did.is_empty() && !config.menu_areas.is_empty() {
+        return Err("Configura el DDI principal antes de agregar áreas del menú.".into());
+    }
+
+    let mut keys = HashSet::new();
+    for area in &mut config.menu_areas {
+        area.area = area.area.trim().to_string();
+        area.extension = area.extension.trim().to_string();
+        if area.key > 9 {
+            return Err("La tecla debe estar entre 0 y 9.".into());
+        }
+        if !keys.insert(area.key) {
+            return Err(format!("La tecla {} está repetida.", area.key));
+        }
+        if area.area.is_empty() {
+            return Err(format!("Escribe el nombre del área para la tecla {}.", area.key));
+        }
+        if area.area.chars().count() > 80 {
+            return Err(format!("El nombre del área para la tecla {} excede 80 caracteres.", area.key));
+        }
+        if area.extension.is_empty() {
+            return Err(format!("Escribe la extensión para la tecla {}.", area.key));
+        }
+        if area.extension.chars().count() > 32 {
+            return Err(format!("La extensión para la tecla {} excede 32 caracteres.", area.key));
+        }
+    }
+
+    Ok(config)
+}
+
 async fn update_settings(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -371,7 +456,9 @@ async fn update_settings(
         return (StatusCode::BAD_REQUEST, "La contraseña SMDR excede 128 caracteres.").into_response();
     }
 
-    let mut candidate = state.settings.lock().unwrap().clone();
+    let _settings_write = state.settings_write.lock().unwrap();
+    let mut settings = state.settings.lock().unwrap();
+    let mut candidate = (*settings).clone();
     candidate.pbx_ip = pbx_ip;
     candidate.pbx_port = update.pbx_port;
     if let Some(password) = update.smdr_password.filter(|password| !password.is_empty()) {
@@ -397,7 +484,7 @@ async fn update_settings(
     if let Some(connection) = new_database {
         *state.db.lock().unwrap() = connection;
     }
-    *state.settings.lock().unwrap() = candidate.clone();
+    *settings = candidate.clone();
     state.settings_changed.send_modify(|revision| *revision = revision.wrapping_add(1));
 
     Json(UpdateSettingsResult {
@@ -445,10 +532,29 @@ fn persist_settings(settings: &Settings) -> Result<(), String> {
     let serialized = toml::to_string_pretty(settings)
         .map_err(|error| format!("No se pudo serializar la configuración: {error}"))?;
     let temp_path = format!("{CONFIG_FILE}.tmp");
-    fs::write(&temp_path, serialized)
-        .map_err(|error| format!("No se pudo escribir el archivo temporal de configuración: {error}"))?;
-    fs::File::open(&temp_path)
-        .and_then(|file| file.sync_all())
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut temp_file = options
+        .open(&temp_path)
+        .map_err(|error| format!("No se pudo abrir el archivo temporal de configuración: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temp_file
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("No se pudieron proteger los permisos de configuración: {error}"))?;
+    }
+    temp_file
+        .set_len(0)
+        .map_err(|error| format!("No se pudo limpiar el archivo temporal de configuración: {error}"))?;
+    temp_file
+        .write_all(serialized.as_bytes())
+        .and_then(|()| temp_file.sync_all())
         .map_err(|error| format!("No se pudo guardar el archivo temporal de configuración: {error}"))?;
 
     let backup_stamp = SystemTime::now()
