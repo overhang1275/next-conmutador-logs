@@ -17,10 +17,10 @@ SMDR reports call detail according to the fields and format provided by the PBX.
 
 The installer downloads this repository, installs its build dependencies, compiles the Rust and Next.js applications, creates a restricted service account, and configures two `systemd` services.
 
-After publishing this repository to GitHub, run the following from a Debian or Ubuntu server as root. Replace `OWNER/REPOSITORY` with the repository path:
+Run the following from a Debian or Ubuntu server as root:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/OWNER/REPOSITORY/main/install.sh)" -- https://github.com/OWNER/REPOSITORY.git
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/overhang1275/next-conmutador-logs/main/install.sh)" -- https://github.com/overhang1275/next-conmutador-logs.git
 ```
 
 The installer asks for the PBX IPv4 address, SMDR TCP port, and dashboard password. After installation, enter the SMDR password in **PBX settings**. The dashboard listens on TCP port `3001`; allow access only from a trusted network. Do not expose it directly to the public internet.
