@@ -1,0 +1,7 @@
+pbx_ip = "192.0.2.10"
+pbx_port = 2300
+smdr_password = ""
+database_path = "data/calls.sqlite3"
+menu_did = ""
+menu_areas = []
+api_token = "REPLACE_WITH_RANDOM_TOKEN"

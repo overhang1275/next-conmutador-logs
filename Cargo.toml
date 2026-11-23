@@ -1,0 +1,13 @@
+[package]
+name = "ns500-smdr"
+version = "0.1.0"
+edition = "2024"
+description = "Recolector local de registros SMDR para Panasonic KX-NS500"
+
+[dependencies]
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
