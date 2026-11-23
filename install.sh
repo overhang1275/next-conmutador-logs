@@ -37,6 +37,19 @@ for octet in "$a" "$b" "$c" "$d"; do
   (( 10#$octet <= 255 )) || die "La IP no es válida."
 done
 
+DEFAULT_DASHBOARD_HOST=""
+if command -v ip >/dev/null 2>&1; then
+  DEFAULT_DASHBOARD_HOST="$(ip -4 route get "$PBX_IP" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit } }' || true)"
+fi
+if [[ -n "$DEFAULT_DASHBOARD_HOST" ]]; then
+  printf 'IP o nombre DNS para abrir el dashboard [%s]: ' "$DEFAULT_DASHBOARD_HOST"
+else
+  printf 'IP o nombre DNS para abrir el dashboard: '
+fi
+IFS= read -r DASHBOARD_HOST </dev/tty || die "No pude leer la dirección del dashboard."
+DASHBOARD_HOST="${DASHBOARD_HOST:-$DEFAULT_DASHBOARD_HOST}"
+[[ -n "$DASHBOARD_HOST" && "$DASHBOARD_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && "$DASHBOARD_HOST" != "0.0.0.0" ]] || die "Indica la IP o el nombre DNS real del servidor, no 0.0.0.0."
+
 printf 'Puerto SMDR TCP [2300]: '
 IFS= read -r PBX_PORT </dev/tty || die "No pude leer el puerto SMDR."
 PBX_PORT="${PBX_PORT:-2300}"
@@ -58,7 +71,7 @@ unset DASHBOARD_PASSWORD_CONFIRM
 info "Instalando dependencias de sistema y Node.js ${NODE_MAJOR}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git build-essential pkg-config libssl-dev openssl
+apt-get install -y ca-certificates curl git iproute2 build-essential pkg-config libssl-dev openssl
 curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
 apt-get install -y nodejs
 node_major="$(node -p 'process.versions.node.split(".")[0]')"
@@ -100,6 +113,7 @@ install -o root -g "$SERVICE_USER" -m 0640 /dev/null "$SECRETS_DIR/web.env"
 cat >"$SECRETS_DIR/web.env" <<EOF
 AUTH_SECRET=$AUTH_SECRET
 AUTH_TRUST_HOST=true
+AUTH_URL=http://$DASHBOARD_HOST:3001
 DASHBOARD_USER=admin
 DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD
 RUST_API_URL=http://127.0.0.1:8787
@@ -175,7 +189,7 @@ systemctl daemon-reload
 systemctl enable --now linea-clara-smdr.service linea-clara-web.service
 
 printf '\nInstalación terminada.\n'
-printf 'Dashboard: http://IP-DEL-SERVIDOR:3001\n'
+printf 'Dashboard: http://%s:3001\n' "$DASHBOARD_HOST"
 printf 'Usuario: admin (la contraseña fue la que acabas de definir)\n'
 printf 'En Configuración del PBX, captura la contraseña SMDR.\n'
 printf 'Servicios: systemctl status linea-clara-smdr linea-clara-web\n'

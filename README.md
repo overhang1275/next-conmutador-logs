@@ -23,7 +23,7 @@ Run the following from a Debian or Ubuntu server as root:
 curl -fsSL https://raw.githubusercontent.com/overhang1275/next-conmutador-logs/main/install.sh | bash -s -- https://github.com/overhang1275/next-conmutador-logs.git
 ```
 
-The installer asks for the PBX IPv4 address, SMDR TCP port, and dashboard password. After installation, enter the SMDR password in **PBX settings**. The dashboard listens on TCP port `3001`; allow access only from a trusted network. Do not expose it directly to the public internet.
+The installer asks for the PBX IPv4 address, SMDR TCP port, the server IP or DNS name used to open the dashboard, and the dashboard password. It sets that address as Auth.js's canonical URL so login redirects return to the same host. After installation, enter the SMDR password in **PBX settings**. The dashboard listens on TCP port `3001`; allow access only from a trusted network. Do not expose it directly to the public internet.
 
 Check the services and logs with:
 
